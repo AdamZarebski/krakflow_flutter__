@@ -88,6 +88,7 @@ class AddTaskScreen extends StatelessWidget {
               border: OutlineInputBorder(),
             ),
           ),
+
           ElevatedButton(
             onPressed: () {
               final newTask = Task(title: titleController.text,
