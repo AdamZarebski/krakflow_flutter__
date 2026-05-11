@@ -157,6 +157,8 @@ class AddTaskScreen extends StatelessWidget {
 class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
   String selectedFilter = "wszystkie";
 
+  List<Task>? _localTasks;
+
   @override
   Widget build(BuildContext context) {
 
@@ -166,25 +168,26 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep),
-            onPressed: TaskRepository.tasks.isEmpty
+            onPressed: (_localTasks == null || _localTasks!.isEmpty)
                 ? null
                 : () => _showDeleteDialog(context),
           ),
         ],
       ),
         body: FutureBuilder<List<Task>>(
-            future: TaskApiService.fetchTasks(),
+            future: _localTasks == null ? TaskApiService.fetchTasks() : Future.value(_localTasks),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              if (snapshot.hasError) {
+              if (snapshot.hasError && _localTasks == null) {
                 return Center(child: Text("Błąd: ${snapshot.error}"));
               }
 
-              if (snapshot.hasData) {
-                final tasks = snapshot.data!;
+              if (snapshot.hasData || _localTasks != null) {
+                _localTasks ??= snapshot.data!;
+                final tasks = _localTasks!;
 
                 List<Task> filteredTasks = tasks;
                 if (selectedFilter == "wykonane") {
@@ -228,7 +231,7 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                           final task = filteredTasks[index];
 
                           return Dismissible(
-                            key: ValueKey(task.title),
+                            key: ObjectKey(task),
                             direction: DismissDirection.endToStart,
                             background: Container(
                               color: Colors.red,
@@ -289,7 +292,7 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
           );
           if (newTask != null) {
             setState(() {
-              TaskRepository.tasks.add(newTask);
+              _localTasks?.add(newTask);
             });
           }
         },
