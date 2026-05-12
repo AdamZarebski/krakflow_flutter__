@@ -1,46 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:krakflow/services/TaskLocalDatabase.dart';
 import 'TaskRepository.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 //import 'package:krakflow/models/task.dart';
 //import '../services/task_api_service.dart';
 import 'dart:math';
-
-class TaskApiService {
-  static const String baseUrl = "https://dummyjson.com";
-  //static const String baseUrl = "https://dummyjson.com/dfabsf";//endpoint debug
-  static Future<List<Task>> fetchTasks() async {
-    final response = await http.get(
-      Uri.parse("$baseUrl/todos"),
-    );
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final List todos = data["todos"];
-      return todos.map((todo) {
-        final random = Random();
-        final priorities = ["niski", "średni", "wysoki"];
-        final priority = priorities[random.nextInt(priorities.length)];
-        final deadlines = ["jutro", "za miesiac", "za rok", "pojutrze"];
-        final deadline = deadlines[random.nextInt(deadlines.length)];
-
-        return Task(
-
-          title: todo["todo"],
-          deadline: deadline,
-          done: todo["completed"],
-          priority: priority,
-        );
-      }).toList();
-    } else {
-      throw Exception("Błąd pobierania danych");
-    }
-  }
-}
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import '../services/TaskApiService.dart';
 
 
 
 
-void main() {
+void main() async{
+
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Hive.initFlutter();
+  await Hive.openBox("tasks");
+
   runApp(MyApp());
 }
 class MyApp extends StatelessWidget {
@@ -139,7 +117,7 @@ class AddTaskScreen extends StatelessWidget {
           const SizedBox(height: 10,),
           ElevatedButton(
             onPressed: () {
-              final newTask = Task(title: titleController.text,
+              final newTask = Task(id: DateTime.now().millisecondsSinceEpoch, title: titleController.text,
                   deadline: deadlineController.text,
                   done: false,
                   priority: "niskie");
@@ -158,6 +136,13 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
   String selectedFilter = "wszystkie";
 
   List<Task>? _localTasks;
+  late Future<List<Task>> tasksFuture;
+
+  @override
+  void initState(){
+    super.initState();
+    tasksFuture = TaskApiService.fetchTasks();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -265,12 +250,19 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                                   ),
                                 );
                                 if (updatedTask != null) {
+                                  await TaskLocalDatabase.updateTask(updatedTask);
+
                                   setState(() {
-                                    int originalIndex = TaskRepository.tasks
-                                        .indexOf(task);
-                                    TaskRepository.tasks[originalIndex] =
-                                        updatedTask;
+                                    tasksFuture = loadTasks();
                                   });
+
+
+                                  // setState(() {
+                                  //   int originalIndex = TaskRepository.tasks
+                                  //       .indexOf(task);
+                                  //   TaskRepository.tasks[originalIndex] =
+                                  //       updatedTask;
+                                  // });
                                 }
                               },
                             ),
@@ -372,6 +364,7 @@ class EditTaskScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 final updatedTask = Task(
+                  id: DateTime.now().millisecondsSinceEpoch,
                   title: titleController.text,
                   deadline: deadlineController.text,
                   done: task.done,
