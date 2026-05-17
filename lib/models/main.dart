@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'dart:math';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../services/TaskApiService.dart';
-
+import '../services/TaskSyncService.dart';
 
 
 
@@ -27,11 +27,75 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: "Flutter",
-      home: MojEkranAplikacji()
+      home: HomeScreen(),
     );
   }
 }
 
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int allTasksCount = 0;
+  int doneTasksCount = 0;
+  int todoTasksCount = 0;
+
+  bool _isInitialised = false;
+  late Future<void> _initSyncFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _initSyncFuture = TaskSyncService.loadInitialDataIfNeeded();
+  }
+
+  void updateCounters(List<Task> tasks) {
+    setState(() {
+      allTasksCount = tasks.length;
+      doneTasksCount = tasks.where((task) => task.done).length;
+      todoTasksCount = tasks.where((task) => !task.done).length;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: FutureBuilder<void>(
+        future: _initSyncFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting && !_isInitialised) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          _isInitialised = true;
+
+          return SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    "Masz dzisiaj $allTasksCount zadań, wykonano: $doneTasksCount",
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Expanded(
+                  child: MojEkranAplikacji(
+                    onTasksLoaded: updateCounters,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
 
 class TaskCard extends StatelessWidget {
   final String title;
@@ -67,7 +131,10 @@ class TaskCard extends StatelessWidget {
 }
 
 class MojEkranAplikacji extends StatefulWidget {
-  const MojEkranAplikacji({super.key});
+
+  final ValueChanged<List<Task>> onTasksLoaded;
+  const MojEkranAplikacji({super.key, required this.onTasksLoaded});
+
   @override
   State<MojEkranAplikacji> createState() => StanDynamicznegoWidgetu();
 
@@ -117,10 +184,12 @@ class AddTaskScreen extends StatelessWidget {
           const SizedBox(height: 10,),
           ElevatedButton(
             onPressed: () {
-              final newTask = Task(id: DateTime.now().millisecondsSinceEpoch, title: titleController.text,
+              final newTask = Task(
+                  id: DateTime.now().millisecondsSinceEpoch,
+                  title: titleController.text,
                   deadline: deadlineController.text,
                   done: false,
-                  priority: "niskie");
+                  priority: priorityController.text.isEmpty ? "niski" : priorityController.text,);
               Navigator.pop(context, newTask);
             },
             child: Text("Zapisz"),
@@ -135,13 +204,17 @@ class AddTaskScreen extends StatelessWidget {
 class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
   String selectedFilter = "wszystkie";
 
-  List<Task>? _localTasks;
   late Future<List<Task>> tasksFuture;
 
   @override
   void initState(){
     super.initState();
     tasksFuture = TaskApiService.fetchTasks();
+  }
+
+  Future<List<Task>> loadTasks() async {
+    //await TaskSyncService.loadInitialDataIfNeeded();
+    return TaskLocalDatabase.getTasks();
   }
 
   @override
@@ -153,26 +226,27 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep),
-            onPressed: (_localTasks == null || _localTasks!.isEmpty)
-                ? null
-                : () => _showDeleteDialog(context),
+            onPressed: () => _showDeleteDialog(context),
           ),
         ],
       ),
         body: FutureBuilder<List<Task>>(
-            future: _localTasks == null ? TaskApiService.fetchTasks() : Future.value(_localTasks),
+            future: tasksFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              if (snapshot.hasError && _localTasks == null) {
+              if (snapshot.hasError) {
                 return Center(child: Text("Błąd: ${snapshot.error}"));
               }
 
-              if (snapshot.hasData || _localTasks != null) {
-                _localTasks ??= snapshot.data!;
-                final tasks = _localTasks!;
+              if (snapshot.hasData) {
+                final tasks = snapshot.data!;
+
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  widget.onTasksLoaded(tasks);
+                });
 
                 List<Task> filteredTasks = tasks;
                 if (selectedFilter == "wykonane") {
@@ -225,10 +299,11 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                               child: const Icon(
                                   Icons.delete, color: Colors.white),
                             ),
-                            onDismissed: (direction) {
+                            onDismissed: (direction) async {
+                              await TaskLocalDatabase.deleteTask(task.id);
                               setState(() {
-                                tasks.remove(task);
-                                //TaskRepository.tasks.remove(task);
+                                tasksFuture = loadTasks();
+
                               });
                             },
                             child: TaskCard(
@@ -236,9 +311,17 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                               subtitle: "termin: ${task
                                   .deadline} \npriorytet: ${task.priority}",
                               done: task.done,
-                              onChanged: (value) {
+                              onChanged: (value) async {
+                                final updatedTask = Task(
+                                  id: task.id,
+                                  title: task.title,
+                                  deadline: task.deadline,
+                                  priority: task.priority,
+                                  done: value ?? false,
+                                );
+                                await TaskLocalDatabase.updateTask(updatedTask);
                                 setState(() {
-                                  task.done = value!;
+                                  tasksFuture = loadTasks();
                                 });
                               },
                               onTap: () async {
@@ -251,18 +334,9 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                                 );
                                 if (updatedTask != null) {
                                   await TaskLocalDatabase.updateTask(updatedTask);
-
                                   setState(() {
                                     tasksFuture = loadTasks();
                                   });
-
-
-                                  // setState(() {
-                                  //   int originalIndex = TaskRepository.tasks
-                                  //       .indexOf(task);
-                                  //   TaskRepository.tasks[originalIndex] =
-                                  //       updatedTask;
-                                  // });
                                 }
                               },
                             ),
@@ -283,8 +357,9 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
             MaterialPageRoute(builder: (context) => AddTaskScreen()),
           );
           if (newTask != null) {
+            await TaskLocalDatabase.addTask(newTask);
             setState(() {
-              _localTasks?.add(newTask);
+              tasksFuture = loadTasks();
             });
           }
         },
@@ -320,9 +395,10 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
               child: const Text("Anuluj"),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
+                await TaskLocalDatabase.deleteAllTasks();
                 setState(() {
-                  TaskRepository.tasks.clear();
+                  tasksFuture = loadTasks();
                 });
                 Navigator.pop(context);
               },
@@ -364,7 +440,7 @@ class EditTaskScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 final updatedTask = Task(
-                  id: DateTime.now().millisecondsSinceEpoch,
+                  id: task.id,
                   title: titleController.text,
                   deadline: deadlineController.text,
                   done: task.done,

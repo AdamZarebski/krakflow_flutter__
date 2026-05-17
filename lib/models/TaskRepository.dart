@@ -23,7 +23,7 @@ class Task {
       title : map["title"],
       deadline : map["deadline"],
       done : map["done"],
-      priority : map["id"],
+      priority : map["priority"],
     );
   }
 }

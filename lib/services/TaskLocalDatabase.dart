@@ -18,9 +18,6 @@ class TaskLocalDatabase {
     }
   }
   static Future<void> addTask(Task task) async {
-    await TaskLocalDatabase.addTask(task);
-    await loadTasks();
-
     await _box.put(task.id, task.toMap());
   }
   static Future<void> updateTask(Task task) async {
