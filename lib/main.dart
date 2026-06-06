@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:krakflow/services/TaskLocalDatabase.dart';
-import 'TaskRepository.dart';
+import 'models/TaskRepository.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 //import 'package:krakflow/models/task.dart';
 //import '../services/task_api_service.dart';
 import 'dart:math';
 import 'package:hive_ce_flutter/hive_flutter.dart';
-import '../services/TaskApiService.dart';
-import '../services/TaskSyncService.dart';
+import 'services/TaskApiService.dart';
+import 'services/TaskSyncService.dart';
 import 'dart:developer' as developer;
-
+import 'services/notification_service.dart';
 
 void main() async{
 
@@ -18,6 +18,7 @@ void main() async{
 
   await Hive.initFlutter();
   await Hive.openBox("tasks");
+  await NotificationService.init();
 
   runApp(MyApp());
 }
@@ -290,7 +291,7 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                           final task = filteredTasks[index];
 
                           return Dismissible(
-                            key: ObjectKey(task),
+                            key: Key(task.id.toString()),
                             direction: DismissDirection.endToStart,
                             background: Container(
                               color: Colors.red,
@@ -300,6 +301,9 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                                   Icons.delete, color: Colors.white),
                             ),
                             onDismissed: (direction) async {
+                              setState(() {
+                                filteredTasks.removeAt(index);
+                              });
                               await TaskLocalDatabase.deleteTask(task.id);
                               setState(() {
                                 tasksFuture = loadTasks();
@@ -312,6 +316,9 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                                   .deadline} \npriorytet: ${task.priority}",
                               done: task.done,
                               onChanged: (value) async {
+                                final isDone = value ?? false;
+                                final wasDone = task.done;
+
                                 final updatedTask = Task(
                                   id: task.id,
                                   title: task.title,
@@ -320,6 +327,10 @@ class StanDynamicznegoWidgetu extends State<MojEkranAplikacji> {
                                   done: value ?? false,
                                 );
                                 await TaskLocalDatabase.updateTask(updatedTask);
+
+                                if (!wasDone && isDone) {
+                                  await NotificationService.showTaskDoneNotification(task.title);
+                                }
                                 setState(() {
                                   tasksFuture = loadTasks();
                                 });
